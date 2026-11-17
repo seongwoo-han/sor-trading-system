@@ -1,0 +1,10 @@
+# New installations only: copy this file to application.properties and configure your local DB.
+# Existing projects: keep the application.properties you already use.
+spring.application.name=stock
+server.address=127.0.0.1
+spring.datasource.url=${STOCK_DB_URL:jdbc:mysql://localhost:3306/stock}
+spring.datasource.username=${STOCK_DB_USER:root}
+spring.datasource.password=${STOCK_DB_PASSWORD:}
+spring.sql.init.mode=always
+spring.sql.init.schema-locations=classpath:schema.sql,classpath:sor-schema.sql
+spring.sql.init.data-locations=classpath:sor-data.sql

@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SOR 주문 안정성 검증</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f4f7fa; color: #162b42; font: 16px/1.65 system-ui, sans-serif; }
+    main { max-width: 1080px; margin: 32px auto; padding: 0 24px 48px; }
+    h1 { margin: 18px 0 8px; font-size: 30px; } h2 { margin: 28px 0 12px; font-size: 21px; }
+    p { color: #526176; margin: 8px 0 16px; }
+    nav, .actions { display: flex; flex-wrap: wrap; gap: 10px; }
+    a { color: #087e8b; } nav a { margin-right: 12px; }
+    .cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+    .card, .note { padding: 22px; background: white; border: 1px solid #dbe2e9; border-radius: 10px; }
+    .card h2 { margin-top: 0; } .card p { min-height: 80px; }
+    .note { margin: 20px 0; background: #e5f5f4; border-color: #82c6c3; }
+    .note strong { display: block; margin-bottom: 6px; }
+    button { padding: 12px 16px; border: 1px solid #aebcc9; border-radius: 6px; background: white; color: #162b42; cursor: pointer; font: inherit; }
+    button.primary { color: white; border-color: #087e8b; background: #087e8b; font-weight: 700; }
+    button:disabled { opacity: .5; cursor: default; }
+    #notice { min-height: 28px; margin: 18px 0; color: #087e8b; font-weight: 600; }
+    #notice.error, .fail { color: #ad2938; } .pass { color: #087e8b; font-weight: 700; }
+    .table-wrap { overflow-x: auto; } table { width: 100%; border-collapse: collapse; background: white; white-space: nowrap; }
+    th, td { padding: 13px 16px; text-align: left; border-bottom: 1px solid #dbe2e9; } th { font-size: 14px; color: #526176; }
+    #result-title { margin: 0 0 10px; } #result-summary { color: #162b42; }
+    #checks { padding-left: 24px; } #checks li { margin: 6px 0; }
+    details { margin-top: 20px; } summary { color: #526176; cursor: pointer; }
+    pre { max-height: 420px; padding: 18px; overflow: auto; border-radius: 8px; background: #162b42; color: #eef7fa; font: 13px/1.6 ui-monospace, monospace; }
+    small { display: block; color: #526176; margin: 12px 0; }
+    [hidden] { display: none !important; }
+    @media (max-width: 680px) { main { padding: 0 16px 32px; } .cards { grid-template-columns: 1fr; } .card p { min-height: auto; } }
+  </style>
+</head>
+<body>
+<main>
+  <nav><a href="/sor-test.html">주문관리</a><a href="/sor-compare.html">단일시장 · SOR 비교</a></nav>
+  <h1>주문 안정성 검증</h1>
+  <p>같은 요청의 반복 전송과 잔액을 두고 경합하는 동시 주문을 실제 주문 API로 확인합니다.</p>
+  <div class="note">
+    <strong>테스트용 대기 주문을 만든 뒤 자동 취소합니다.</strong>
+    지정가는 1원이며, A·B 매도호가가 모두 1원보다 높고 기존 대기 주문이 없을 때만 시작합니다.
+    자동 모의시장은 정지한 뒤 검증합니다.
+    검증 중에는 다른 탭에서 매매하거나 호가를 변경하지 마세요. 테스트 주문과 취소 기록은 주문내역에 남습니다.
+  </div>
+  <div class="cards">
+    <section class="card">
+      <h2>① 같은 주문을 두 번 전송</h2>
+      <p>같은 요청 ID로 1원 · 1주 주문을 두 번 보냅니다. 주문 번호가 같고 예약금이 1원만 증가하는지 확인합니다.</p>
+      <button id="duplicate" class="primary" type="button">중복 요청 검증</button>
+    </section>
+    <section class="card">
+      <h2>② 두 주문을 동시에 전송</h2>
+      <p>각 주문이 주문 가능 금액의 절반을 넘도록 두 건을 동시에 보냅니다. 한 건만 접수되고 다른 한 건은 잔액 부족으로 거절돼야 합니다.</p>
+      <button id="concurrent" class="primary" type="button">동시 예약 검증</button>
+    </section>
+  </div>
+  <div id="notice" role="status" aria-live="polite">현재 상태를 불러오는 중입니다.</div>
+  <div class="actions">
+    <button id="refresh" type="button">현재 상태 조회</button>
+    <button id="resume" type="button" hidden>중단된 검증 확인 · 취소 마무리</button>
+  </div>
+  <h2>현재 계좌</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>총 현금</th><th>예약금</th><th>주문 가능 금액</th><th>보유 주식</th></tr></thead>
+    <tbody id="account"><tr><td colspan="4">조회 중입니다.</td></tr></tbody>
+  </table></div>
+  <small id="market-label"></small>
+  <section id="result-section" hidden>
+    <h2 id="result-title"></h2>
+    <p id="result-summary"></p>
+    <ul id="checks"></ul>
+    <div class="table-wrap"><table>
+      <thead><tr><th>요청</th><th>HTTP 결과</th><th>주문 번호</th><th>최종 상태</th><th>취소 수량</th></tr></thead>
+      <tbody id="requests"></tbody>
+    </table></div>
+    <details><summary>검증 기록 보기</summary><pre id="raw"></pre></details>
+  </section>
+  <small>동시 예약 검증은 두 HTTP 요청을 함께 전송하는 기능 검증입니다. 처리량이나 지연시간을 측정하는 부하 테스트는 아닙니다.</small>
+</main>
+<script>
+  const byId = id => document.getElementById(id);
+  const activeKey = 'stock.sor.check.active.v1';
+  const lastKey = 'stock.sor.check.last.v1';
+  const lockName = 'stock.sor.check.runner.v1';
+  const money = value => value.toLocaleString('ko-KR') + '원';
+  let busy = false;
+  let active = null;
+  let storageProblem = false;
+
+  function validRun(value) {
+    return value && value.version === 1 && ['DUPLICATE', 'CONCURRENT'].includes(value.kind)
+      && ['SEND', 'VERIFY', 'CLEANUP', 'FINAL'].includes(value.phase)
+      && value.before && value.before.account && value.before.book
+      && Array.isArray(value.calls) && value.calls.length === 2
+      && value.calls.every(call => call && /^[A-Za-z0-9_-]{1,64}$/.test(call.body?.clientOrderId)
+        && call.body.limitPrice === 1 && Number.isInteger(call.body.quantity)
+        && call.body.quantity > 0 && call.body.quantity <= 2147483647)
+      && (value.kind === 'DUPLICATE'
+        ? JSON.stringify(value.calls[0].body) === JSON.stringify(value.calls[1].body)
+        : value.calls[0].body.clientOrderId !== value.calls[1].body.clientOrderId);
+  }
+  function loadActive() {
+    const raw = localStorage.getItem(activeKey);
+    if (!raw) return null;
+    const value = JSON.parse(raw);
+    if (!validRun(value)) throw new Error('저장된 검증 기록을 읽지 못했습니다. 주문관리 화면에서 대기 주문을 먼저 확인해 주세요.');
+    return value;
+  }
+  function persist() {
+    localStorage.setItem(activeKey, JSON.stringify(active));
+  }
+  function addCheck(ok, text) {
+    active.checks.push({ok: Boolean(ok), text});
+  }
+  function notice(text, error = false) {
+    byId('notice').textContent = text;
+    byId('notice').className = error ? 'error' : '';
+  }
+  function controls() {
+    byId('duplicate').disabled = busy || Boolean(active) || storageProblem;
+    byId('concurrent').disabled = busy || Boolean(active) || storageProblem;
+    byId('refresh').disabled = busy;
+    byId('resume').hidden = !active;
+    byId('resume').disabled = busy || storageProblem;
+  }
+  async function request(path, body) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12000);
+    try {
+      const options = {cache: 'no-store', signal: controller.signal};
+      if (body !== undefined) {
+        options.method = 'POST';
+        options.headers = {'Content-Type': 'application/json'};
+        options.body = JSON.stringify(body);
+      }
+      const response = await fetch(path, options);
+      let data;
+      try { data = await response.json(); }
+      catch { throw new Error('서버 응답을 읽지 못했습니다.'); }
+      if (!response.ok) {
+        const error = new Error(data.message || 'HTTP ' + response.status);
+        error.status = response.status;
+        throw error;
+      }
+      return data;
+    } finally { clearTimeout(timeout); }
+  }
+  function accountSame(a, b) {
+    return ['accountId', 'cash', 'reservedCash', 'availableCash', 'quantity','reservedQuantity','availableQuantity'].every(key => (a[key] ?? 0) === (b[key] ?? 0));
+  }
+  function bookSame(a, b) {
+    return a.revision === b.revision && a.quotes.length === b.quotes.length && a.quotes.every(x => {
+      const y = b.quotes.find(q => q.market === x.market && (q.level ?? 1) === (x.level ?? 1));
+      return y && x.askPrice === y.askPrice && x.askQuantity === y.askQuantity
+        && (x.bidPrice ?? 0) === (y.bidPrice ?? 0) && (x.bidQuantity ?? 0) === (y.bidQuantity ?? 0);
+    });
+  }
+  function appendRow(target, values) {
+    const row = document.createElement('tr');
+    for (const value of values) {
+      const cell = document.createElement('td'); cell.textContent = value; row.append(cell);
+    }
+    target.append(row);
+  }
+  async function snapshot() {
+    const [account, book, open] = await Promise.all([
+      request('/api/sor/account'), request('/api/sor/book'), request('/api/sor/orders/open')
+    ]);
+    const body = byId('account'); body.replaceChildren();
+    appendRow(body, [money(account.cash), money(account.reservedCash), money(account.availableCash), account.quantity.toLocaleString('ko-KR') + '주']);
+    byId('market-label').textContent = book.quotes.map(q => q.market + '시장 ' + (q.level ?? 1) + '호가 ' + money(q.askPrice) + ' · ' + q.askQuantity + '주').join(' / ')
+      + ' · 대기 주문 ' + open.length + '건';
+    return {account, book, open};
+  }
+  async function preflight(kind) {
+    let auto = null;
+    try { auto = await request('/api/sor/auto-market'); }
+    catch (error) { if (error.status !== 404) throw error; }
+    if (auto?.running) throw new Error('통합 앱에서 자동시장을 정지한 뒤 안정성 검증을 시작해 주세요.');
+    if (sessionStorage.getItem('stock.sor.pendingAction.v4') || sessionStorage.getItem('stock.sor.pendingBuy')) {
+      throw new Error('주문관리 화면에서 이전 요청의 결과 확인 / 재시도를 먼저 마쳐 주세요.');
+    }
+    const before = await snapshot();
+    if (before.open.length || before.account.reservedCash !== 0 || (before.account.reservedQuantity ?? 0) !== 0) {
+      throw new Error('기존 대기 주문이 있습니다. 주문관리 화면에서 기존 주문을 확인하고 처리한 뒤 검증해 주세요.');
+    }
+    if (![2,6].includes(before.book.quotes.length) || !['A', 'B'].every(m => before.book.quotes.some(q => q.market === m))
+        || !before.book.quotes.every(q => q.askPrice > 1)) {
+      throw new Error('두 시장의 모든 매도호가가 1원보다 높아야 합니다.');
+    }
+    const cash = before.account.availableCash;
+    if (!Number.isSafeInteger(cash) || cash < (kind === 'DUPLICATE' ? 1 : 2)) {
+      throw new Error('검증에 필요한 주문 가능 금액이 부족하거나 표시 가능한 정수 범위를 벗어났습니다.');
+    }
+    const quantity = kind === 'DUPLICATE' ? 1 : Math.floor(cash / 2) + 1;
+    if (quantity > 2147483647) throw new Error('현재 잔액은 이 검증 화면의 수량 범위를 초과합니다.');
+    const [againAccount, againBook] = await Promise.all([request('/api/sor/account'), request('/api/sor/book')]);
+    if (!accountSame(before.account, againAccount) || !bookSame(before.book, againBook)) {
+      throw new Error('조회 중 계좌 또는 호가가 바뀌었습니다. 다른 작업을 마친 뒤 다시 시작해 주세요.');
+    }
+    const prefix = 'check-' + crypto.randomUUID();
+    const firstId = prefix + '-a';
+    return {version: 1, kind, phase: 'SEND', startedAt: new Date().toISOString(), before, checks: [], recovered: false,
+      calls: [0, 1].map(i => ({body: {clientOrderId: kind === 'DUPLICATE' || i === 0 ? firstId : prefix + '-b', limitPrice: 1, quantity}, reply: null})),
+      cancellations: {}, ordersBeforeCancel: [], after: null};
+  }
+  async function sendCall(call) {
+    try {
+      const order = await request('/api/sor/orders', call.body);
+      if (!Number.isSafeInteger(order.orderId) || order.clientOrderId !== call.body.clientOrderId) {
+        throw new Error('주문 응답의 ID를 확인하지 못했습니다.');
+      }
+      call.reply = {status: 200, order};
+      persist();
+    } catch (error) {
+      if (error.status >= 400 && error.status < 500) {
+        call.reply = {status: error.status, message: error.message}; persist();
+      } else throw error;
+    }
+  }
+  async function sendCalls() {
+    if (active.kind === 'DUPLICATE') {
+      for (const call of active.calls) if (!call.reply) await sendCall(call);
+    } else {
+      const results = await Promise.allSettled(active.calls.filter(call => !call.reply).map(sendCall));
+      const failure = results.find(result => result.status === 'rejected');
+      if (failure) throw failure.reason;
+    }
+    active.phase = 'VERIFY'; persist();
+  }
+  function uniqueAccepted() {
+    const map = new Map();
+    for (const call of active.calls) if (call.reply?.order) map.set(call.reply.order.orderId, call.reply.order);
+    return [...map.values()];
+  }
+  async function verify() {
+    const state = await snapshot();
+    const orders = await Promise.all(uniqueAccepted().map(order => request('/api/sor/orders/' + order.orderId)));
+    const mine = new Set(active.calls.map(call => call.body.clientOrderId));
+    const mineOpen = state.open.filter(order => mine.has(order.clientOrderId));
+    const accepted = active.calls.filter(call => call.reply?.status === 200);
+    active.checks = [];
+    if (active.kind === 'DUPLICATE') {
+      addCheck(accepted.length === 2 && orders.length === 1 && mineOpen.length === 1,
+        '같은 요청 ID의 두 응답이 같은 주문 번호를 반환하고, 대기 주문은 1건입니다.');
+    } else {
+      addCheck(accepted.length === 1 && orders.length === 1 && mineOpen.length === 1
+        && active.calls.filter(call => call.reply?.status === 400 && /주문 가능 금액이 부족/.test(call.reply.message)).length === 1,
+        '두 주문 중 1건만 접수되고, 다른 1건은 잔액 부족으로 거절됐습니다.');
+    }
+    const expectedReservation = active.calls[0].body.quantity;
+    addCheck(orders.length === 1 && state.account.reservedCash === expectedReservation
+      && state.account.availableCash === active.before.account.availableCash - expectedReservation
+      && orders.every(order => order.reservedCash === expectedReservation && order.status === 'OPEN'
+        && order.remainingQuantity === expectedReservation && order.requestedQuantity === expectedReservation),
+      '예약금은 접수된 한 주문의 금액인 ' + money(expectedReservation) + '만 증가했습니다.');
+    addCheck(orders.length === 1 && orders.every(order => order.filledQuantity === 0 && order.totalAmount === 0)
+      && state.account.cash === active.before.account.cash && state.account.quantity === active.before.account.quantity,
+      '체결은 0주이며, 총 현금과 보유 주식이 유지됐습니다.');
+    addCheck(bookSame(active.before.book, state.book), '시장 가격·잔량과 시장 상태 번호가 유지됐습니다.');
+    addCheck(state.account.availableCash >= 0 && state.account.reservedCash >= 0
+      && state.account.cash === state.account.availableCash + state.account.reservedCash,
+      '주문 가능 금액과 예약금이 음수가 아니며, 합계가 총 현금과 같습니다.');
+    active.ordersBeforeCancel = orders;
+    active.stateBeforeCancel = state;
+    active.phase = 'CLEANUP'; persist();
+  }
+  async function cleanup() {
+    // Each ID belongs to this run; never cancel existing user orders.
+    for (const order of uniqueAccepted()) {
+      if (active.cancellations[order.orderId]) continue;
+      const latest = await request('/api/sor/orders/' + order.orderId);
+      const final = latest.cancellable
+        ? await request('/api/sor/orders/' + order.orderId + '/cancel', {}) : latest;
+      if (final.orderId !== order.orderId || final.clientOrderId !== order.clientOrderId || final.cancellable) {
+        throw new Error('테스트 주문의 종료 상태를 확인하지 못했습니다.');
+      }
+      active.cancellations[order.orderId] = final; persist();
+    }
+    active.phase = 'FINAL'; persist();
+  }
+  async function finish() {
+    const after = await snapshot();
+    const ids = new Set(active.calls.map(call => call.body.clientOrderId));
+    const finalOrders = Object.values(active.cancellations);
+    active.checks = active.checks.filter(check => !check.final);
+    active.checks.push({final: true, ok: finalOrders.length === 1
+      && finalOrders.every(order => order.status === 'CANCELLED' && order.remainingQuantity === 0 && order.reservedCash === 0
+        && order.cancelledQuantity === order.requestedQuantity && order.filledQuantity === 0)
+      && !after.open.some(order => ids.has(order.clientOrderId)), text: '테스트 주문이 취소됐고, 요청한 전체 수량이 취소 수량으로 기록됐습니다.'});
+    active.checks.push({final: true, ok: accountSame(active.before.account, after.account) && bookSame(active.before.book, after.book),
+      text: '취소 후 현금·예약금·주문 가능 금액·보유 주식·호가가 시작 전과 같습니다.'});
+    if (active.concurrentObservationIncomplete) active.checks.push({final: true, ok: false,
+      text: '전송 도중 연결이 끊겨 최초 동시 접수 결과를 확정하지 못했습니다. 취소 완료 후 동시 검증을 다시 실행하세요.'});
+    active.after = after;
+    active.finishedAt = new Date().toISOString();
+    active.passed = active.checks.every(check => check.ok);
+    persist();
+    localStorage.setItem(lastKey, JSON.stringify(active));
+    localStorage.removeItem(activeKey);
+    const completed = active; active = null;
+    render(completed);
+    notice(completed.passed ? '검증 통과 · 테스트 주문 취소와 예약금 해제까지 확인했습니다.'
+      : '검증 결과에 확인이 필요한 항목이 있습니다. 아래 결과를 확인해 주세요.', !completed.passed);
+  }
+  function render(run) {
+    byId('result-section').hidden = false;
+    byId('result-title').textContent = (run.kind === 'DUPLICATE' ? '중복 요청 검증' : '동시 예약 검증')
+      + (run.finishedAt ? (run.passed ? ' · 통과' : ' · 확인 필요') : ' · 진행 중');
+    byId('result-summary').textContent = run.finishedAt
+      ? '테스트 요청을 처리하고 취소를 마쳤습니다. 주문내역에는 테스트 기록이 남습니다.'
+      : '요청 ID와 진행 상태를 보관했습니다. 중단됐다면 위 버튼으로 결과 확인과 취소를 마쳐 주세요.';
+    if (run.recovered) byId('result-summary').textContent += ' 중단 후 같은 ID로 확인한 결과이며, 최초 동시 전송 결과의 기록은 별도로 보관하세요.';
+    const list = byId('checks'); list.replaceChildren();
+    for (const check of run.checks) {
+      const li = document.createElement('li'); li.className = check.ok ? 'pass' : 'fail';
+      li.textContent = (check.ok ? '✓ ' : '확인 필요: ') + check.text; list.append(li);
+    }
+    const rows = byId('requests'); rows.replaceChildren();
+    run.calls.forEach((call, i) => {
+      const order = call.reply?.order;
+      const final = order && run.cancellations[order.orderId];
+      appendRow(rows, ['요청 ' + (i + 1), call.reply ? String(call.reply.status) : '결과 미확인', order?.orderId ?? '—',
+        final ? (final.status === 'CANCELLED' ? '취소 완료' : final.status) : (order?.status ?? '—'), final?.cancelledQuantity ?? '—']);
+    });
+    byId('raw').textContent = JSON.stringify(run, null, 2);
+  }
+  async function continueRun() {
+    render(active);
+    if (active.phase === 'SEND') await sendCalls();
+    if (active.phase === 'VERIFY') await verify();
+    if (active.phase === 'CLEANUP') await cleanup();
+    if (active.phase === 'FINAL') await finish();
+  }
+  async function exclusive(action) {
+    if (busy) return;
+    busy = true; controls();
+    try {
+      if (!navigator.locks?.request) throw new Error('이 검증은 localhost의 Chrome 또는 Edge에서 열어 주세요.');
+      await navigator.locks.request(lockName, {ifAvailable: true}, async lock => {
+        if (!lock) throw new Error('다른 탭에서 검증 중입니다. 해당 탭의 검증을 먼저 마쳐 주세요.');
+        active = loadActive(); controls();
+        await action();
+      });
+    } catch (error) {
+      if (active) render(active);
+      notice(error.message + (active ? ' ‘중단된 검증 확인 · 취소 마무리’를 눌러 주세요.' : ''), true);
+    } finally { busy = false; controls(); }
+  }
+  async function start(kind) {
+    return exclusive(async () => {
+      if (active) throw new Error('이전 검증을 먼저 마쳐 주세요.');
+      notice('시작 조건을 확인하고 테스트 주문을 전송합니다.');
+      active = await preflight(kind);
+      try { persist(); }
+      catch (error) { active = null; throw new Error('브라우저에 요청 ID를 보관할 수 없어 검증을 시작하지 않았습니다.'); }
+      await continueRun();
+    });
+  }
+  byId('duplicate').addEventListener('click', () => start('DUPLICATE'));
+  byId('concurrent').addEventListener('click', () => start('CONCURRENT'));
+  byId('resume').addEventListener('click', () => exclusive(async () => {
+    if (!active) { notice('중단된 검증이 없습니다.'); return; }
+    if (active.kind === 'CONCURRENT' && active.phase === 'SEND') active.concurrentObservationIncomplete = true;
+    active.recovered = true; persist();
+    notice('기존 요청 ID로 결과를 확인하고 테스트 주문 취소를 마무리합니다.');
+    await continueRun();
+  }));
+  byId('refresh').addEventListener('click', () => exclusive(async () => {
+    await snapshot(); if (active) render(active);
+    notice(active ? '진행 중인 검증이 있습니다. 결과 확인과 취소를 마쳐 주세요.' : '현재 상태를 조회했습니다. 검증 버튼을 선택해 주세요.');
+  }));
+  globalThis.addEventListener?.('storage', event => {
+    if (event.key !== activeKey || busy) return;
+    try { active = loadActive(); controls(); }
+    catch (error) { storageProblem = true; controls(); notice(error.message, true); }
+  });
+  async function initialize() {
+    try {
+      active = loadActive();
+      const last = localStorage.getItem(lastKey);
+      if (active) render(active);
+      else if (last) { const previous = JSON.parse(last); if (validRun(previous)) render(previous); }
+    } catch (error) { storageProblem = true; notice(error.message, true); controls(); return; }
+    busy = true; controls();
+    try {
+      await snapshot();
+      notice(active ? '중단된 검증이 있습니다. 같은 요청으로 확인하고 취소를 마쳐 주세요.' : '준비됐습니다. ① 중복 요청 검증부터 눌러 주세요.');
+    } catch (error) { notice('서버 연결을 확인해 주세요. ' + error.message, true); }
+    finally { busy = false; controls(); }
+  }
+  initialize();
+</script>
+</body>
+</html>

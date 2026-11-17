@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>가상 주식 거래</title>
+    <style>
+        body { font-family: sans-serif; max-width: 760px; margin: 32px auto; padding: 20px; color: #202124; }
+        button { padding: 10px 16px; margin: 0 8px 8px 0; cursor: pointer; }
+        button:disabled { cursor: wait; }
+        h2 { margin-top: 36px; }
+        .note { color: #5f6368; font-size: 14px; }
+        .table-wrap { overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; white-space: nowrap; }
+        th, td { padding: 12px 10px; border-bottom: 1px solid #ddd; text-align: right; }
+        th { background: #f5f6f7; }
+        th:first-child, td:first-child { text-align: left; }
+        .empty { text-align: center !important; color: #5f6368; }
+        .buy { color: #1967d2; }
+        .sell { color: #b3261e; }
+    </style>
+</head>
+<body>
+    <h1>가상 주식 거래</h1>
+    <p>종목: 연습용 주식</p>
+    <p>1주 가격: <strong id="price">-</strong>원</p>
+    <p>내 현금: <strong id="cash">-</strong>원</p>
+    <p>보유 주식: <strong id="quantity">-</strong>주</p>
+
+    <button type="button" onclick="request('/api/account', 'GET')">잔액 조회</button>
+    <button type="button" onclick="request('/api/buy', 'POST')">1주 매수</button>
+    <button type="button" onclick="request('/api/sell', 'POST')">1주 매도</button>
+    <p id="message" role="status" aria-live="polite"></p>
+
+    <h2>거래내역</h2>
+    <p class="note">최근 100건 · 새로 체결된 거래부터 기록됩니다.</p>
+    <p id="history-message" role="status" aria-live="polite"></p>
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr><th scope="col">시간</th><th scope="col">종류</th><th scope="col">1주 가격</th><th scope="col">수량</th><th scope="col">거래금액</th></tr>
+            </thead>
+            <tbody id="trades"><tr><td colspan="5" class="empty">거래내역을 불러오는 중입니다.</td></tr></tbody>
+        </table>
+    </div>
+
+    <script>
+        let requestInProgress = false;
+
+        function won(value) {
+            return Number(value).toLocaleString('ko-KR') + '원';
+        }
+
+        function showTrades(trades) {
+            const body = document.getElementById('trades');
+            body.replaceChildren();
+
+            if (trades.length === 0) {
+                const row = document.createElement('tr');
+                const cell = document.createElement('td');
+                cell.colSpan = 5;
+                cell.className = 'empty';
+                cell.textContent = '아직 기록된 거래가 없습니다.';
+                row.appendChild(cell);
+                body.appendChild(row);
+                return;
+            }
+
+            for (const trade of trades) {
+                const row = document.createElement('tr');
+                const values = [
+                    String(trade.created_at).replace('T', ' ').slice(0, 19),
+                    trade.side === 'BUY' ? '매수' : '매도',
+                    won(trade.price),
+                    Number(trade.quantity).toLocaleString('ko-KR') + '주',
+                    won(trade.price * trade.quantity)
+                ];
+
+                values.forEach((value, index) => {
+                    const cell = document.createElement('td');
+                    cell.textContent = value;
+                    if (index === 1) cell.className = trade.side === 'BUY' ? 'buy' : 'sell';
+                    row.appendChild(cell);
+                });
+                body.appendChild(row);
+            }
+        }
+
+        async function loadTrades() {
+            const status = document.getElementById('history-message');
+            try {
+                const response = await fetch('/api/trades', { cache: 'no-store' });
+                if (!response.ok) throw new Error('History request failed');
+                const trades = await response.json();
+                if (!Array.isArray(trades)) throw new Error('Invalid history response');
+                showTrades(trades);
+                status.textContent = '';
+            } catch (error) {
+                status.textContent = "거래내역을 확인하지 못했습니다. '잔액 조회'를 눌러 다시 확인해 주세요.";
+                status.style.color = 'red';
+            }
+        }
+
+        async function request(url, method) {
+            if (requestInProgress) return;
+            requestInProgress = true;
+            const buttons = document.querySelectorAll('button');
+            const message = document.getElementById('message');
+            buttons.forEach(button => button.disabled = true);
+
+            try {
+                const response = await fetch(url, { method, cache: 'no-store' });
+                const data = await response.json();
+                if (!Number.isFinite(data.price) || !Number.isFinite(data.cash)
+                        || !Number.isFinite(data.quantity)) {
+                    throw new Error('Invalid account response');
+                }
+
+                document.getElementById('price').textContent = data.price.toLocaleString('ko-KR');
+                document.getElementById('cash').textContent = data.cash.toLocaleString('ko-KR');
+                document.getElementById('quantity').textContent = data.quantity;
+                message.textContent = data.message;
+                message.style.color = response.ok ? 'green' : 'red';
+                await loadTrades();
+            } catch (error) {
+                message.textContent = "응답을 확인하지 못했습니다. 서버 실행 상태를 확인하고 '잔액 조회'를 눌러주세요.";
+                message.style.color = 'red';
+            } finally {
+                buttons.forEach(button => button.disabled = false);
+                requestInProgress = false;
+            }
+        }
+
+        request('/api/account', 'GET');
+    </script>
+</body>
+</html>
