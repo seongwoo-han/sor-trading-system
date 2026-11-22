@@ -40,7 +40,7 @@
   <p>같은 요청의 반복 전송과 잔액을 두고 경합하는 동시 주문을 실제 주문 API로 확인합니다.</p>
   <div class="note">
     <strong>테스트용 대기 주문을 만든 뒤 자동 취소합니다.</strong>
-    지정가는 1원이며, A·B 매도호가가 모두 1원보다 높고 기존 대기 주문이 없을 때만 시작합니다.
+    지정가는 1원이며, KRX·NXT 매도호가가 모두 1원보다 높고 기존 대기 주문이 없을 때만 시작합니다.
     자동 모의시장은 정지한 뒤 검증합니다.
     검증 중에는 다른 탭에서 매매하거나 호가를 변경하지 마세요. 테스트 주문과 취소 기록은 주문내역에 남습니다.
   </div>
@@ -79,6 +79,7 @@
   </section>
   <small>동시 예약 검증은 두 HTTP 요청을 함께 전송하는 기능 검증입니다. 처리량이나 지연시간을 측정하는 부하 테스트는 아닙니다.</small>
 </main>
+<script src="/sor-auth.js?v=1"></script>
 <script>
   const byId = id => document.getElementById(id);
   const activeKey = 'stock.sor.check.active.v1';
@@ -135,7 +136,7 @@
         options.headers = {'Content-Type': 'application/json'};
         options.body = JSON.stringify(body);
       }
-      const response = await fetch(path, options);
+      const response = await sorAuth.request(path, options);
       let data;
       try { data = await response.json(); }
       catch { throw new Error('서버 응답을 읽지 못했습니다.'); }
@@ -151,7 +152,8 @@
     return ['accountId', 'cash', 'reservedCash', 'availableCash', 'quantity','reservedQuantity','availableQuantity'].every(key => (a[key] ?? 0) === (b[key] ?? 0));
   }
   function bookSame(a, b) {
-    return a.revision === b.revision && a.quotes.length === b.quotes.length && a.quotes.every(x => {
+    return (a.symbol ?? 'VIRTUAL01') === (b.symbol ?? 'VIRTUAL01')
+      && a.revision === b.revision && a.quotes.length === b.quotes.length && a.quotes.every(x => {
       const y = b.quotes.find(q => q.market === x.market && (q.level ?? 1) === (x.level ?? 1));
       return y && x.askPrice === y.askPrice && x.askQuantity === y.askQuantity
         && (x.bidPrice ?? 0) === (y.bidPrice ?? 0) && (x.bidQuantity ?? 0) === (y.bidQuantity ?? 0);
@@ -165,14 +167,16 @@
     target.append(row);
   }
   async function snapshot() {
-    const [account, book, open] = await Promise.all([
-      request('/api/sor/account'), request('/api/sor/book'), request('/api/sor/orders/open')
+    const query = active ? '?symbol=' + encodeURIComponent(active.before.book.symbol ?? 'VIRTUAL01') : '';
+    const [portfolio, open] = await Promise.all([
+      request('/api/sor/portfolio' + query), request('/api/sor/orders/open')
     ]);
+    const {account, book, feeRatesBps, sorConsent} = portfolio;
     const body = byId('account'); body.replaceChildren();
     appendRow(body, [money(account.cash), money(account.reservedCash), money(account.availableCash), account.quantity.toLocaleString('ko-KR') + '주']);
-    byId('market-label').textContent = book.quotes.map(q => q.market + '시장 ' + (q.level ?? 1) + '호가 ' + money(q.askPrice) + ' · ' + q.askQuantity + '주').join(' / ')
+    byId('market-label').textContent = (book.symbol ?? 'VIRTUAL01') + ' · ' + book.quotes.map(q => q.market + '시장 ' + (q.level ?? 1) + '호가 ' + money(q.askPrice) + ' · ' + q.askQuantity + '주').join(' / ')
       + ' · 대기 주문 ' + open.length + '건';
-    return {account, book, open};
+    return {account, book, open, feeRatesBps, sorConsent};
   }
   async function preflight(kind) {
     let auto = null;
@@ -182,11 +186,22 @@
     if (sessionStorage.getItem('stock.sor.pendingAction.v4') || sessionStorage.getItem('stock.sor.pendingBuy')) {
       throw new Error('주문관리 화면에서 이전 요청의 결과 확인 / 재시도를 먼저 마쳐 주세요.');
     }
+    const hours = await request('/api/sor/market-hours');
+    if (!hours.markets.some(market => market.acceptsLimit)) {
+      throw new Error('시장관리에서 시연 시각 10:30을 적용한 뒤 검증을 시작해 주세요.');
+    }
     const before = await snapshot();
+    if (!before.sorConsent?.agreedAt) {
+      throw new Error('매수·매도 화면의 SOR 동의서에서 먼저 동의해 주세요.');
+    }
+    const session = await request('/api/session');
+    if (session.accountId !== before.account.accountId || !session.accountNumber) {
+      throw new Error('현재 로그인 계좌를 다시 확인해 주세요.');
+    }
     if (before.open.length || before.account.reservedCash !== 0 || (before.account.reservedQuantity ?? 0) !== 0) {
       throw new Error('기존 대기 주문이 있습니다. 주문관리 화면에서 기존 주문을 확인하고 처리한 뒤 검증해 주세요.');
     }
-    if (![2,6].includes(before.book.quotes.length) || !['A', 'B'].every(m => before.book.quotes.some(q => q.market === m))
+    if (![2,6].includes(before.book.quotes.length) || !['KRX', 'NXT'].every(m => before.book.quotes.some(q => q.market === m))
         || !before.book.quotes.every(q => q.askPrice > 1)) {
       throw new Error('두 시장의 모든 매도호가가 1원보다 높아야 합니다.');
     }
@@ -203,12 +218,13 @@
     const prefix = 'check-' + crypto.randomUUID();
     const firstId = prefix + '-a';
     return {version: 1, kind, phase: 'SEND', startedAt: new Date().toISOString(), before, checks: [], recovered: false,
-      calls: [0, 1].map(i => ({body: {clientOrderId: kind === 'DUPLICATE' || i === 0 ? firstId : prefix + '-b', limitPrice: 1, quantity}, reply: null})),
+      calls: [0, 1].map(i => ({body: {clientOrderId: kind === 'DUPLICATE' || i === 0 ? firstId : prefix + '-b',
+        symbol: before.book.symbol, limitPrice: 1, quantity, accountNumber: session.accountNumber}, reply: null})),
       cancellations: {}, ordersBeforeCancel: [], after: null};
   }
   async function sendCall(call) {
     try {
-      const order = await request('/api/sor/orders', call.body);
+      const order = await request('/api/sor/orders', {...call.body, symbol: call.body.symbol ?? active.before.book.symbol ?? 'VIRTUAL01'});
       if (!Number.isSafeInteger(order.orderId) || order.clientOrderId !== call.body.clientOrderId) {
         throw new Error('주문 응답의 ID를 확인하지 못했습니다.');
       }
@@ -250,11 +266,13 @@
         && active.calls.filter(call => call.reply?.status === 400 && /주문 가능 금액이 부족/.test(call.reply.message)).length === 1,
         '두 주문 중 1건만 접수되고, 다른 1건은 잔액 부족으로 거절됐습니다.');
     }
-    const expectedReservation = active.calls[0].body.quantity;
+    const expectedQuantity = active.calls[0].body.quantity;
+    const rate = orders[0]?.feesEnabled ? Math.max(0, ...Object.values(state.feeRatesBps ?? {})) : 0;
+    const expectedReservation = expectedQuantity + Math.floor(expectedQuantity * rate / 10_000);
     addCheck(orders.length === 1 && state.account.reservedCash === expectedReservation
       && state.account.availableCash === active.before.account.availableCash - expectedReservation
       && orders.every(order => order.reservedCash === expectedReservation && order.status === 'OPEN'
-        && order.remainingQuantity === expectedReservation && order.requestedQuantity === expectedReservation),
+        && order.remainingQuantity === expectedQuantity && order.requestedQuantity === expectedQuantity),
       '예약금은 접수된 한 주문의 금액인 ' + money(expectedReservation) + '만 증가했습니다.');
     addCheck(orders.length === 1 && orders.every(order => order.filledQuantity === 0 && order.totalAmount === 0)
       && state.account.cash === active.before.account.cash && state.account.quantity === active.before.account.quantity,

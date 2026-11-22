@@ -22,14 +22,15 @@
 </head>
 <body>
     <h1>가상 주식 거래</h1>
-    <p>종목: 연습용 주식</p>
+    <p>삼성전자 · 005930</p>
     <p>1주 가격: <strong id="price">-</strong>원</p>
     <p>내 현금: <strong id="cash">-</strong>원</p>
     <p>보유 주식: <strong id="quantity">-</strong>주</p>
 
     <button type="button" onclick="request('/api/account', 'GET')">잔액 조회</button>
-    <button type="button" onclick="request('/api/buy', 'POST')">1주 매수</button>
-    <button type="button" onclick="request('/api/sell', 'POST')">1주 매도</button>
+    <button type="button" onclick="request('/api/buy', 'POST')">1주 시장가 매수</button>
+    <button type="button" onclick="request('/api/sell', 'POST')">1주 시장가 매도</button>
+    <p class="note">첫 주문 전에 <a href="/sor-app.html#trade">매수·매도 → SOR 동의서</a>에서 동의해 주세요.</p>
     <p id="message" role="status" aria-live="polite"></p>
 
     <h2>거래내역</h2>
@@ -38,12 +39,13 @@
     <div class="table-wrap">
         <table>
             <thead>
-                <tr><th scope="col">시간</th><th scope="col">종류</th><th scope="col">1주 가격</th><th scope="col">수량</th><th scope="col">거래금액</th></tr>
+                <tr><th scope="col">시간</th><th scope="col">종류</th><th scope="col">1주 가격</th><th scope="col">수량</th><th scope="col">체결금액</th><th scope="col">수수료</th><th scope="col">정산금액</th></tr>
             </thead>
-            <tbody id="trades"><tr><td colspan="5" class="empty">거래내역을 불러오는 중입니다.</td></tr></tbody>
+            <tbody id="trades"><tr><td colspan="7" class="empty">거래내역을 불러오는 중입니다.</td></tr></tbody>
         </table>
     </div>
 
+    <script src="/sor-auth.js?v=1"></script>
     <script>
         let requestInProgress = false;
 
@@ -58,7 +60,7 @@
             if (trades.length === 0) {
                 const row = document.createElement('tr');
                 const cell = document.createElement('td');
-                cell.colSpan = 5;
+                cell.colSpan = 7;
                 cell.className = 'empty';
                 cell.textContent = '아직 기록된 거래가 없습니다.';
                 row.appendChild(cell);
@@ -68,12 +70,16 @@
 
             for (const trade of trades) {
                 const row = document.createElement('tr');
+                const amount = trade.price * trade.quantity;
+                const fee = trade.fee ?? 0;
                 const values = [
                     String(trade.created_at).replace('T', ' ').slice(0, 19),
                     trade.side === 'BUY' ? '매수' : '매도',
                     won(trade.price),
                     Number(trade.quantity).toLocaleString('ko-KR') + '주',
-                    won(trade.price * trade.quantity)
+                    won(amount),
+                    won(fee),
+                    won(trade.side === 'BUY' ? amount + fee : amount - fee)
                 ];
 
                 values.forEach((value, index) => {
@@ -89,7 +95,7 @@
         async function loadTrades() {
             const status = document.getElementById('history-message');
             try {
-                const response = await fetch('/api/trades', { cache: 'no-store' });
+                const response = await sorAuth.request('/api/trades', { cache: 'no-store' });
                 if (!response.ok) throw new Error('History request failed');
                 const trades = await response.json();
                 if (!Array.isArray(trades)) throw new Error('Invalid history response');
@@ -109,7 +115,7 @@
             buttons.forEach(button => button.disabled = true);
 
             try {
-                const response = await fetch(url, { method, cache: 'no-store' });
+                const response = await sorAuth.request(url, { method, cache: 'no-store' });
                 const data = await response.json();
                 if (!Number.isFinite(data.price) || !Number.isFinite(data.cash)
                         || !Number.isFinite(data.quantity)) {

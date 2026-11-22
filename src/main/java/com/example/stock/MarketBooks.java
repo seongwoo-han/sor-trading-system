@@ -10,7 +10,7 @@ public final class MarketBooks {
 
     public static List<SorService.MarketQuote> normalize(List<SorService.MarketQuote> input) {
         if (input == null || (input.size() != 2 && input.size() != 6) || input.stream().anyMatch(q -> q == null)) {
-            throw new IllegalArgumentException("A·B 시장의 1~3호가를 모두 입력해 주세요.");
+            throw new IllegalArgumentException("KRX·NXT의 1~3호가를 모두 입력해 주세요.");
         }
         var sorted = input.stream().sorted(Comparator.comparing(SorService.MarketQuote::market)
                 .thenComparingInt(SorService.MarketQuote::level)).toList();
@@ -19,7 +19,7 @@ public final class MarketBooks {
         if (bidInputs != 0 && bidInputs != input.size()) throw new IllegalArgumentException("매수호가는 모든 시장·단계에 함께 입력해 주세요.");
         int depth = input.size() == 2 ? 1 : 3;
         int index = 0;
-        for (String market : List.of("A", "B")) {
+        for (String market : MarketVenue.NAMES) {
             long previous = 0;
             long previousBid = Long.MAX_VALUE;
             for (int level = 1; level <= depth; level++) {
@@ -54,16 +54,29 @@ public final class MarketBooks {
     }
 
     public static List<SorService.MarketQuote> basicExample() {
-        return normalize(List.of(new SorService.MarketQuote("A", 1, 70000, 10, 69800, 10),
-                new SorService.MarketQuote("B", 1, 69900, 4, 69850, 4)));
+        return basicExample(StockSymbol.VIRTUAL);
+    }
+
+    public static List<SorService.MarketQuote> basicExample(StockSymbol symbol) {
+        long price = symbol.referencePrice();
+        return normalize(List.of(new SorService.MarketQuote("KRX", 1, price, 10, price - 200, 10),
+                new SorService.MarketQuote("NXT", 1, price - 100, 4, price - 150, 4)));
     }
 
     public static List<SorService.MarketQuote> depthExample() {
-        return List.of(new SorService.MarketQuote("A", 1, 1000, 2, 970, 2),
-                new SorService.MarketQuote("A", 2, 1020, 4, 950, 4),
-                new SorService.MarketQuote("A", 3, 1040, 4, 930, 4),
-                new SorService.MarketQuote("B", 1, 990, 3, 980, 3),
-                new SorService.MarketQuote("B", 2, 1010, 3, 960, 3),
-                new SorService.MarketQuote("B", 3, 1030, 4, 940, 4));
+        return List.of(new SorService.MarketQuote("KRX", 1, 1000, 2, 970, 2),
+                new SorService.MarketQuote("KRX", 2, 1020, 4, 950, 4),
+                new SorService.MarketQuote("KRX", 3, 1040, 4, 930, 4),
+                new SorService.MarketQuote("NXT", 1, 990, 3, 980, 3),
+                new SorService.MarketQuote("NXT", 2, 1010, 3, 960, 3),
+                new SorService.MarketQuote("NXT", 3, 1030, 4, 940, 4));
+    }
+
+    public static List<SorService.MarketQuote> depthExample(StockSymbol symbol) {
+        var example = depthExample();
+        if (symbol == StockSymbol.VIRTUAL) return example;
+        return example.stream().map(level -> new SorService.MarketQuote(level.market(), level.level(),
+                symbol.referencePrice() + (level.askPrice() - 1_000) * 10, level.askQuantity(),
+                symbol.referencePrice() + (level.bidPrice() - 1_000) * 10, level.bidQuantity())).toList();
     }
 }

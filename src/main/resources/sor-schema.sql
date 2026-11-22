@@ -10,15 +10,21 @@ CREATE TABLE IF NOT EXISTS sim_market_quote (
 CREATE TABLE IF NOT EXISTS sor_order (
     id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
     account_id INT NOT NULL,
+    symbol VARCHAR(16) NOT NULL DEFAULT 'VIRTUAL01',
     client_order_id VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     side VARCHAR(4) NOT NULL,
+    order_type VARCHAR(8) NOT NULL DEFAULT 'LIMIT',
+    routing_policy VARCHAR(16) NOT NULL DEFAULT 'PRICE_FIRST',
     status VARCHAR(24) NOT NULL,
-    limit_price BIGINT NOT NULL,
+    limit_price BIGINT NULL,
     requested_quantity INT NOT NULL,
     filled_quantity INT NOT NULL,
     remaining_quantity INT NOT NULL,
     cancelled_quantity INT NOT NULL DEFAULT 0,
+    amended_quantity INT NOT NULL DEFAULT 0,
+    original_order_id BIGINT NULL,
     total_amount BIGINT NOT NULL,
+    fees_enabled BOOLEAN NOT NULL DEFAULT FALSE,
     reserved_cash BIGINT NOT NULL DEFAULT 0,
     reserved_quantity INT NOT NULL DEFAULT 0,
     reservation_enabled BOOLEAN NOT NULL DEFAULT FALSE,
@@ -29,14 +35,22 @@ CREATE TABLE IF NOT EXISTS sor_order (
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     UNIQUE KEY sor_order_request_unique (account_id, client_order_id),
+    UNIQUE KEY sor_order_amendment_source_unique (original_order_id),
     CONSTRAINT sor_order_account_fk FOREIGN KEY (account_id) REFERENCES account (id),
+    CONSTRAINT sor_order_amendment_source_fk FOREIGN KEY (original_order_id) REFERENCES sor_order (id),
     CONSTRAINT sor_order_side_both_valid CHECK (side IN ('BUY', 'SELL')),
-    CONSTRAINT sor_order_status_v4 CHECK (status IN ('OPEN', 'FILLED', 'PARTIALLY_FILLED', 'UNFILLED', 'CANCELLED')),
-    CONSTRAINT sor_order_price_positive CHECK (limit_price > 0),
+    CONSTRAINT sor_order_routing_policy_valid CHECK (routing_policy IN ('PRICE_FIRST', 'QUANTITY_FIRST')),
+    CONSTRAINT sor_order_status_v5 CHECK (status IN ('OPEN', 'FILLED', 'PARTIALLY_FILLED', 'UNFILLED', 'CANCELLED', 'AMENDED')),
+    CONSTRAINT sor_order_type_price_valid CHECK (
+        (order_type = 'LIMIT' AND limit_price IS NOT NULL AND limit_price > 0)
+        OR (order_type = 'MARKET' AND limit_price IS NULL)
+    ),
     CONSTRAINT sor_order_requested_positive CHECK (requested_quantity > 0),
-    CONSTRAINT sor_order_quantities_v4 CHECK (
+    CONSTRAINT sor_order_quantities_v5 CHECK (
         filled_quantity >= 0 AND remaining_quantity >= 0 AND cancelled_quantity >= 0
-        AND filled_quantity + remaining_quantity + cancelled_quantity = requested_quantity
+        AND filled_quantity + remaining_quantity + cancelled_quantity + amended_quantity = requested_quantity
+        AND ((status = 'AMENDED' AND amended_quantity > 0 AND remaining_quantity = 0)
+             OR (status <> 'AMENDED' AND amended_quantity = 0))
     ),
     CONSTRAINT sor_order_reserved_v4 CHECK (reserved_cash >= 0),
     CONSTRAINT sor_order_reserved_after_v4 CHECK (reserved_cash_after >= 0 AND reserved_cash_after <= cash_after),
@@ -66,11 +80,12 @@ CREATE TABLE IF NOT EXISTS sor_execution (
 CREATE TABLE IF NOT EXISTS sim_market_level (
     market VARCHAR(8) NOT NULL,
     level_no INT NOT NULL,
+    symbol VARCHAR(16) NOT NULL DEFAULT 'VIRTUAL01',
     ask_price BIGINT NOT NULL,
     ask_quantity INT NOT NULL,
     bid_price BIGINT NOT NULL DEFAULT 0,
     bid_quantity INT NOT NULL DEFAULT 0,
-    PRIMARY KEY (market, level_no),
+    PRIMARY KEY (market, level_no, symbol),
     CONSTRAINT sim_level_market_fk FOREIGN KEY (market) REFERENCES sim_market_quote (market),
     CONSTRAINT sim_level_number_valid CHECK (level_no BETWEEN 1 AND 3),
     CONSTRAINT sim_level_price_positive CHECK (ask_price > 0),
@@ -88,6 +103,7 @@ CREATE TABLE IF NOT EXISTS sim_book_state (
 CREATE TABLE IF NOT EXISTS sim_quote_event (
     id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
     account_id INT NOT NULL,
+    symbol VARCHAR(16) NOT NULL DEFAULT 'VIRTUAL01',
     client_event_id VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     expected_revision BIGINT NOT NULL,
     a_price BIGINT NOT NULL,

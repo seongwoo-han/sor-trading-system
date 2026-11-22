@@ -7,6 +7,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -19,10 +20,17 @@ public class AutoMarketController {
     public AutoMarketService.Status status() { return autoMarket.status(); }
 
     @PostMapping("/start")
-    public AutoMarketService.Status start() { return autoMarket.start(); }
+    public AutoMarketService.Status start(@RequestParam(name = "symbol", required = false) String symbol) {
+        return autoMarket.start(symbol == null ? null : StockSymbol.from(symbol));
+    }
 
     @PostMapping("/stop")
     public AutoMarketService.Status stop() { return autoMarket.stop(); }
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<Map<String, String>> invalidInput(IllegalArgumentException failure) {
+        return ResponseEntity.badRequest().body(Map.of("message", failure.getMessage()));
+    }
 
     @ExceptionHandler({IllegalStateException.class, DataAccessException.class})
     public ResponseEntity<Map<String, String>> unavailable(RuntimeException failure) {

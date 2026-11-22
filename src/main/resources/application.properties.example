@@ -8,3 +8,5 @@ spring.datasource.password=${STOCK_DB_PASSWORD:}
 spring.sql.init.mode=always
 spring.sql.init.schema-locations=classpath:schema.sql,classpath:sor-schema.sql
 spring.sql.init.data-locations=classpath:sor-data.sql
+# Additional exchange holidays use a comma-separated list of ISO calendar dates.
+# stock.market.closed-dates=YYYY-MM-DD,YYYY-MM-DD
