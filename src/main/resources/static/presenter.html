@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SOR Desk · 발표자 접속</title>
+  <link rel="stylesheet" href="/sor-app.css?v=17">
+</head>
+<body class="login-page">
+  <main class="login-card" aria-labelledby="access-title">
+    <p class="login-brand">SOR <span>Desk</span></p>
+    <h1 id="access-title">발표자 접속</h1>
+    <p id="access-message" class="message {{messageClass}}" role="status" {{messageHidden}}>{{message}}</p>
+    <form class="login-form" action="/login" method="post">
+      <input type="hidden" name="{{csrfParameter}}" value="{{csrfToken}}">
+      <label class="field" for="username">아이디
+        <input id="username" name="username" autocomplete="username" required>
+      </label>
+      <label class="field" for="password">비밀번호
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+      </label>
+      <button class="button button-primary" type="submit">발표자로 접속</button>
+    </form>
+    <a class="access-link" href="/login.html">모의계좌 접속으로 돌아가기</a>
+  </main>
+</body>
+</html>

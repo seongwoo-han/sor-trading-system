@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SOR Desk · 모의계좌 접속</title>
+  <link rel="stylesheet" href="/sor-app.css?v=17">
+</head>
+<body class="login-page">
+  <main class="login-card" aria-labelledby="access-title">
+    <p class="login-brand">SOR <span>Desk</span></p>
+    <h1 id="access-title">{{title}}</h1>
+    <p id="access-message" class="message {{messageClass}}" role="status" {{messageHidden}}>{{message}}</p>
+
+    <div id="account-entry" {{entryHidden}}>
+      <form class="login-form" action="/access/connect" method="post">
+        <input type="hidden" name="{{csrfParameter}}" value="{{csrfToken}}">
+        <label class="field" for="code">체험 코드
+          <input id="code" name="code" type="text" maxlength="64" placeholder="XXXX-XXXX"
+                 autocomplete="off" autocapitalize="characters" spellcheck="false" required>
+        </label>
+        <button id="connect-account" class="button button-primary" type="submit">내 계좌로 접속</button>
+      </form>
+      <form class="login-form login-secondary" action="/access/open" method="post">
+        <input type="hidden" name="{{csrfParameter}}" value="{{csrfToken}}">
+        <p>새 계좌에 모의 예수금 1,000만 원이 지급돼요.</p>
+        <button id="open-account" class="button button-outline" type="submit">새 모의계좌 만들기</button>
+      </form>
+      <a class="access-link" href="/presenter.html">발표자 접속</a>
+    </div>
+
+    <section id="issued-access" class="login-form" {{issuedHidden}}>
+      <p>계좌번호 <strong id="issued-account-number">{{accountNumber}}</strong></p>
+      <label class="field" for="issued-code">내 체험 코드
+        <input id="issued-code" class="access-code-value" type="text" value="{{accessCode}}" readonly spellcheck="false">
+      </label>
+      <p>이 코드로 다시 접속하면 잔고와 주문내역을 이어서 볼 수 있어요.</p>
+      <button id="copy-issued-code" class="button button-outline" type="button" hidden>코드 복사</button>
+      <form action="/access/continue" method="post">
+        <input type="hidden" name="{{csrfParameter}}" value="{{csrfToken}}">
+        <button class="button button-primary" type="submit">거래 화면 열기</button>
+      </form>
+    </section>
+
+    <section id="active-access" class="login-form" {{activeHidden}}>
+      <p>이미 접속한 계좌가 있어요.</p>
+      <a class="button button-primary" href="{{workspacePath}}">거래 화면 열기</a>
+      <form action="/logout" method="post">
+        <input type="hidden" name="{{csrfParameter}}" value="{{csrfToken}}">
+        <button class="button button-outline" type="submit">접속 종료</button>
+      </form>
+      <a class="access-link" href="/presenter.html">발표자 접속</a>
+    </section>
+  </main>
+  <script src="/sor-auth.js?v=3" defer></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      if (document.getElementById('issued-access').hidden) return;
+      window.addEventListener('pageshow', event => { if (event.persisted) location.reload(); });
+      if (!window.sorAuth?.copyCode) return;
+      const copy = document.getElementById('copy-issued-code');
+      copy.hidden = false;
+      copy.addEventListener('click', async () => {
+        const message = document.getElementById('access-message');
+        message.textContent = await sorAuth.copyCode(document.getElementById('issued-code'));
+        message.classList.remove('error');
+        message.hidden = false;
+      });
+    });
+  </script>
+</body>
+</html>
